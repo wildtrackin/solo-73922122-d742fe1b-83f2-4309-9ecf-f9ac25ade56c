@@ -30,6 +30,10 @@ services:
       PUBLISH_FAILURE_MODE: ${PUBLISH_FAILURE_MODE:-none}
       # 可选：单次后台采集最多页数，演示"继续采集"
       MAX_PAGES_PER_CALL: ${MAX_PAGES_PER_CALL:-}
+      # 可选：回收故障注入 none|delete_error|crash_after_file_delete（一次性）
+      RECLAIM_FAILURE_MODE: ${RECLAIM_FAILURE_MODE:-none}
+      # 可选：下载限速（字节/秒，演示慢下载）；单次请求可用 /catalog/download?throttle= 覆盖
+      DOWNLOAD_THROTTLE_BPS: ${DOWNLOAD_THROTTLE_BPS:-}
     ports:
       - "8000:8000"
     volumes:

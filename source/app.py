@@ -462,6 +462,31 @@ def create_source_app(db_path: str | None = None) -> FastAPI:
             )
         return _redirect()
 
+    @app.post("/demo/bulk-create")
+    async def demo_bulk_create(request: Request):
+        """批量新增记录（幂等）：让目录文件足够大，便于慢下载/回收演示。"""
+        form = await request.form()
+        try:
+            count = int(str(form.get("count", "0")) or "0")
+        except ValueError:
+            count = 0
+        count = max(0, min(count, 2000))
+        prefix = "".join(ch for ch in str(form.get("prefix", "bulk")) if ch.isalnum() or ch in "-_") or "bulk"
+        for i in range(count):
+            ident = f"oai:demo:{prefix}:{i + 1:04d}"
+            if store.get_item(ident) is None:
+                store.create_item(
+                    identifier=ident,
+                    title=f"批量演示书目 {i + 1:04d}",
+                    creator="演示馆员",
+                    subject="批量演示数据",
+                    description="用于慢下载与回收演示的批量记录",
+                    publisher="示例出版社",
+                    date_="2026",
+                    type_="book",
+                )
+        return _redirect()
+
     @app.post("/demo/reset-tokens")
     def demo_reset_tokens():
         store.invalidate_all_tokens()

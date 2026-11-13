@@ -78,6 +78,35 @@ CREATE TABLE IF NOT EXISTS publications (
     published_at TEXT NOT NULL
 );
 
+-- 历史目录回收：目标集在启动时快照固定（当时已登记、且排在最近 keep_count
+-- 次发布之前）；每个目标分两步落库（文件已删 → 登记已清），进程在任意点
+-- 退出都能从未完成状态续办。源记录、轮次与当前水位不属回收范围。
+CREATE TABLE IF NOT EXISTS reclaim_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    status      TEXT NOT NULL DEFAULT 'running',   -- running | completed
+    keep_count  INTEGER NOT NULL DEFAULT 2,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    finished_at TEXT
+);
+-- 同一时刻最多一个未完成的回收；重复启动沿用同次。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reclaim_running
+    ON reclaim_runs((1)) WHERE status = 'running';
+
+CREATE TABLE IF NOT EXISTS reclaim_targets (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    reclaim_id     INTEGER NOT NULL REFERENCES reclaim_runs(id),
+    publication_id INTEGER NOT NULL,               -- 快照自 publications.id；登记清理后此行仍留痕
+    watermark      TEXT NOT NULL,
+    file_path      TEXT NOT NULL,
+    file_name      TEXT NOT NULL,
+    size_bytes     INTEGER NOT NULL DEFAULT 0,
+    file_deleted_at TEXT,                          -- 文件已删（落库后才算数）
+    row_deleted_at  TEXT,                          -- 发布登记已清（与 DELETE 同事务）
+    last_error      TEXT,
+    UNIQUE(reclaim_id, publication_id)
+);
+
 """
 
 UNRESOLVED = ("running", "paused", "publishing", "publish_failed")
@@ -449,3 +478,134 @@ class Database:
 
     def publications(self, limit: int = 20) -> list[sqlite3.Row]:
         return self.query("SELECT * FROM publications ORDER BY id DESC LIMIT ?", limit)
+
+    # --------------------------------------------------------------- reclaim
+    def active_reclaim_run(self) -> sqlite3.Row | None:
+        """未完成的回收（若有）。重启续办、重复启动都以此为准。"""
+        return self.one("SELECT * FROM reclaim_runs WHERE status = 'running' ORDER BY id DESC LIMIT 1")
+
+    def latest_reclaim_run(self) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM reclaim_runs ORDER BY id DESC LIMIT 1")
+
+    def get_reclaim_run(self, reclaim_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM reclaim_runs WHERE id = ?", reclaim_id)
+
+    def create_reclaim_run(self, keep: int = 2) -> sqlite3.Row | None:
+        """快照"此刻已登记"的发布：保留最近 keep 次，其余登记为回收目标。
+
+        目标集在此固定；之后的新发布与正在生成的文件绝不进入本次回收。
+        无可回收对象时返回 None（不创建空回收）。
+        """
+        with self.tx() as conn:
+            pubs = conn.execute("SELECT * FROM publications ORDER BY id DESC").fetchall()
+            targets = pubs[max(keep, 0):]
+            if not targets:
+                return None
+            now = utcnow()
+            cur = conn.execute(
+                "INSERT INTO reclaim_runs(status, keep_count, created_at, updated_at) "
+                "VALUES('running', ?, ?, ?)",
+                (keep, now, now),
+            )
+            reclaim_id = int(cur.lastrowid)
+            conn.executemany(
+                """
+                INSERT INTO reclaim_targets(reclaim_id, publication_id, watermark,
+                                            file_path, file_name, size_bytes)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (reclaim_id, p["id"], p["watermark"], p["file_path"], p["file_name"], p["size_bytes"])
+                    for p in targets
+                ],
+            )
+        return self.get_reclaim_run(reclaim_id)
+
+    def reclaim_targets(self, reclaim_id: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM reclaim_targets WHERE reclaim_id = ? ORDER BY publication_id",
+            reclaim_id,
+        )
+
+    def next_pending_reclaim_target(self, reclaim_id: int) -> sqlite3.Row | None:
+        return self.one(
+            "SELECT * FROM reclaim_targets WHERE reclaim_id = ? AND row_deleted_at IS NULL "
+            "ORDER BY publication_id LIMIT 1",
+            reclaim_id,
+        )
+
+    def reclaim_progress(self, reclaim_id: int) -> dict[str, int]:
+        row = self.one(
+            """
+            SELECT COUNT(*) AS total,
+                   COALESCE(SUM(CASE WHEN row_deleted_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS done,
+                   COALESCE(SUM(CASE WHEN file_deleted_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS files_deleted,
+                   COALESCE(SUM(size_bytes), 0) AS total_bytes,
+                   COALESCE(SUM(CASE WHEN row_deleted_at IS NOT NULL THEN size_bytes ELSE 0 END), 0) AS freed_bytes,
+                   COALESCE(SUM(CASE WHEN last_error IS NOT NULL AND row_deleted_at IS NULL THEN 1 ELSE 0 END), 0) AS errors
+              FROM reclaim_targets WHERE reclaim_id = ?
+            """,
+            reclaim_id,
+        )
+        assert row is not None
+        return {key: int(row[key]) for key in ("total", "done", "files_deleted", "total_bytes", "freed_bytes", "errors")}
+
+    def _touch_reclaim_run(self, conn: sqlite3.Connection, target_id: int) -> None:
+        conn.execute(
+            "UPDATE reclaim_runs SET updated_at = ? "
+            "WHERE id = (SELECT reclaim_id FROM reclaim_targets WHERE id = ?)",
+            (utcnow(), target_id),
+        )
+
+    def mark_target_file_deleted(self, target_id: int) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE reclaim_targets SET file_deleted_at = ?, last_error = NULL WHERE id = ?",
+                (utcnow(), target_id),
+            )
+            self._touch_reclaim_run(conn, target_id)
+
+    def mark_target_row_deleted(self, target_id: int, publication_id: int) -> None:
+        """删除发布登记并标记目标清完：同一事务，要么都成要么都不成。"""
+        with self.tx() as conn:
+            conn.execute("DELETE FROM publications WHERE id = ?", (publication_id,))
+            conn.execute(
+                "UPDATE reclaim_targets SET row_deleted_at = ?, last_error = NULL WHERE id = ?",
+                (utcnow(), target_id),
+            )
+            self._touch_reclaim_run(conn, target_id)
+
+    def record_target_error(self, target_id: int, message: str) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE reclaim_targets SET last_error = ? WHERE id = ?",
+                (message[:500], target_id),
+            )
+            self._touch_reclaim_run(conn, target_id)
+
+    def complete_reclaim_run(self, reclaim_id: int) -> bool:
+        """全部目标清完才报完成；有遗留目标时保持未完成并返回 False。"""
+        with self.tx() as conn:
+            pending = conn.execute(
+                "SELECT COUNT(*) AS c FROM reclaim_targets "
+                "WHERE reclaim_id = ? AND row_deleted_at IS NULL",
+                (reclaim_id,),
+            ).fetchone()["c"]
+            if pending:
+                return False
+            now = utcnow()
+            conn.execute(
+                "UPDATE reclaim_runs SET status = 'completed', updated_at = ?, finished_at = ? "
+                "WHERE id = ? AND status = 'running'",
+                (now, now, reclaim_id),
+            )
+            return True
+
+    def take_reclaim_fault(self) -> str | None:
+        """一次性回收故障注入（演示用）；读后即清除，续办时不再重复触发。"""
+        with self.tx() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'reclaim_fault'").fetchone()
+            if row is None or row["value"] == "none":
+                return None
+            conn.execute("DELETE FROM meta WHERE key = 'reclaim_fault'")
+            return row["value"]

@@ -70,6 +70,16 @@
       </form>
       <p class="muted">失效后，采集端的下一次续页会收到 <code>badResumptionToken</code>，须回原窗口第一页重采、不推进水位。</p>
     </div>
+    <div>
+      <h3>批量造数（慢下载/回收演示）</h3>
+      <form method="post" action="/demo/bulk-create" class="stack inline">
+        <label>数量 <input type="text" name="count" value="150"></label>
+        <label>前缀 <input type="text" name="prefix" value="bulk"></label>
+        <button>批量新增（幂等）</button>
+      </form>
+      <p class="muted">生成 <code>oai:demo:&lt;前缀&gt;:NNNN</code> 记录；采集后目录文件变大，
+        配合采集页 <code>?throttle=</code> 慢速下载演示“回收等待下载收尾”。</p>
+    </div>
   </div>
 </section>
 

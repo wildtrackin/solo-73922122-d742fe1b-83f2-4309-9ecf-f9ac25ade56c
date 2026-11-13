@@ -144,6 +144,89 @@
   </div>
 </section>
 
+<section class="card">
+  <h2>历史目录回收</h2>
+  <p class="muted">只清理<strong>回收启动时已登记</strong>、且排在最近 {{ reclaim_keep }} 次发布之前的目录 XML 及其发布登记；
+    源记录、轮次与当前水位始终保留，新发布与正在生成的文件不受影响。
+    已受理的下载会等响应发送完毕或断连收尾后才删除对应文件；等待与删除不占用数据库写锁，
+    采集、发布与当前目录下载照常进行。</p>
+
+  {% if reclaim %}
+    {% set rrun = reclaim.run %}
+    <div class="runhead">
+      {% if rrun.status == 'completed' %}
+        <span class="pill status-completed">已完成</span>
+      {% elif reclaim.task_active %}
+        <span class="pill status-running">回收中</span>
+      {% else %}
+        <span class="pill status-paused">未完成·待续办</span>
+      {% endif %}
+      <strong>回收 #{{ rrun.id }}</strong>
+      <span class="muted">启动于 {{ rrun.created_at|localtime }} · 保留最近 {{ rrun.keep_count }} 次发布</span>
+      {% if rrun.finished_at %}<span class="muted">完成于 {{ rrun.finished_at|localtime }}</span>{% endif %}
+    </div>
+    {% set p = reclaim.progress %}
+    <div class="progress">
+      <div class="bar"><span style="width: {{ (p.done * 100 / p.total)|round(1) if p.total else 100 }}%"></span></div>
+      <span class="muted">
+        {{ p.done }} / {{ p.total }} 项已清完 · 已释放 {{ p.freed_bytes }} B / 共 {{ p.total_bytes }} B
+        {% if p.errors %} · <span class="bad">{{ p.errors }} 项删除失败</span>{% endif %}
+      </span>
+    </div>
+    {% if reclaim.waiting %}
+      <p class="notice">等待进行中的下载收尾后再删除：
+        {% for name, n in reclaim.waiting.items() %}<code>{{ name }}</code>（{{ n }} 个连接）{% endfor %}</p>
+    {% endif %}
+    {% if rrun.status != 'completed' and not reclaim.task_active %}
+      <p class="notice">本次回收尚未完成（进程中断或删除失败）。重启服务会自动续办，或点击下方“继续回收”。</p>
+    {% endif %}
+    <table class="mini">
+      <thead><tr><th>文件</th><th>水位</th><th>大小</th><th>状态</th><th>错误</th></tr></thead>
+      <tbody>
+      {% for t in reclaim.targets %}
+        <tr>
+          <td><code>{{ t.file_name }}</code></td>
+          <td>{{ t.watermark }}</td>
+          <td>{{ t.size_bytes }} B</td>
+          <td>
+            {% if t.row_deleted_at %}<span class="ok">登记已清</span>
+            {% elif t.file_deleted_at %}<span class="warn">文件已删·登记待清</span>
+            {% elif reclaim.waiting.get(t.file_name) is not none %}<span class="warn">等待下载收尾</span>
+            {% else %}<span class="muted">待清理</span>{% endif %}
+          </td>
+          <td>{% if t.last_error %}<code class="bad">{{ t.last_error }}</code>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">尚未进行过回收。累计发布超过 {{ reclaim_keep }} 次后，可在此回收更早的历史目录文件。</p>
+  {% endif %}
+
+  <div class="actions">
+    <form method="post" action="/reclaim/start">
+      {% if reclaim and reclaim.run.status != 'completed' %}
+        <button class="primary">继续回收（沿用同次）</button>
+      {% else %}
+        <button class="primary">开始回收</button>
+      {% endif %}
+    </form>
+    {% if latest %}<a class="btn ghost" href="/catalog/download">下载当前目录</a>{% endif %}
+  </div>
+
+  <form method="post" action="/config/reclaim-fault" class="startform" style="margin-top:10px">
+    <label>回收故障演练
+      <select name="reclaim_fault">
+        <option value="none" {% if reclaim_fault == 'none' %}selected{% endif %}>none（正常）</option>
+        <option value="delete_error" {% if reclaim_fault == 'delete_error' %}selected{% endif %}>delete_error（删除失败）</option>
+        <option value="crash_after_file_delete" {% if reclaim_fault == 'crash_after_file_delete' %}selected{% endif %}>crash_after_file_delete（清文件与登记之间退出）</option>
+      </select>
+    </label>
+    <button class="ghost">应用</button>
+    <span class="muted">一次性；<code>crash_after_file_delete</code> 配合 <code>docker compose restart catalog-web</code> 观察自动续办</span>
+  </form>
+</section>
+
 <section class="grid">
   <div class="card">
     <h2>采集历史</h2>
@@ -213,6 +296,9 @@
     <li>在演示源修改/撤回记录（同日 datestamp），再次采集：窗口从水位（含当天）开始，按 identifier 更新或删除。</li>
     <li>采集中点源页面“让所有分页凭据失效”，继续采集会收到 <code>badResumptionToken</code>：从原窗口第一页重采、水位不动、已入库记录不丢。</li>
     <li>选 <code>crash_after_publish</code> 并重采一轮 → 进程退出；<code>docker compose restart catalog-web</code> 后，页面水位与下载文件仍是上一版完整结果。</li>
+    <li>回收演示：在演示源“批量造数”后连续采集发布几轮 → 用 <code>/catalog/download?throttle=4096</code> 慢速下载，
+      下载期间再发布两轮 → 点“开始回收”：回收会等慢下载收尾后才删其文件；再选 <code>crash_after_file_delete</code>
+      演示删除中断，重启后自动续办。一键脚本：<code>python3 scripts/demo_reclaim.py --crash</code>。</li>
   </ol>
 </section>
 </main>
