@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>机构库 → 馆藏目录采集</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% if busy %}<meta http-equiv="refresh" content="2">{% endif %}
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>机构库 → 馆藏目录采集</h1>
+    <p class="sub">OAI-PMH · oai_dc · 首次全量，此后按日增量（含上次成功截止日）</p>
+  </div>
+  <div class="endpoint">
+    <span>固定源地址</span><code>{{ endpoint }}</code>
+    {% if source_home %}<a href="{{ source_home }}" target="_blank" rel="noopener">本地演示源 »</a>{% endif %}
+  </div>
+</header>
+
+{% if message %}<div class="banner ok">{{ message }}</div>{% endif %}
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+
+<main>
+<section class="card">
+  <h2>本轮采集</h2>
+  {% if run %}
+    <div class="runhead">
+      <span class="pill status-{{ run.status }}">{{ run.status|status_label }}</span>
+      <strong>第 {{ run.id }} 轮</strong>
+      <span class="muted">{{ '全量' if run.mode == 'full' else '增量' }} · 窗口
+        {{ run.window_from or '（不限起点）' }} → {{ run.window_until }}</span>
+      <span class="muted">开始于 {{ run.started_at|localtime }}</span>
+    </div>
+
+    {% if run.status == 'running' %}
+      <p class="hint">采集中（页面自动刷新）。旧目录仍可下载；进度已实时保存，断流或重启后点“继续采集”即可续采。</p>
+    {% elif run.status == 'publishing' %}
+      <p class="hint">记录已收齐，正在生成并发布目录。发布成功前，页面与下载仍指向上一版完整目录。</p>
+    {% elif run.status == 'paused' %}
+      <p class="hint">本轮已暂停：
+        {% if run.error_code == 'chunk_limit' %}已按单次页数上限暂停，进度已保存。{% else %}<code>{{ run.error_code }}</code>{% endif %}
+        {% if run.error_message %} {{ run.error_message }}{% endif %}
+        {% if run.notice %}<br>提示：{{ run.notice }}{% endif %}</p>
+    {% elif run.status == 'publish_failed' %}
+      <p class="hint">采集已完成，但发布失败：{{ run.error_message }}<br>
+        旧目录与旧水位保持不变；修复后点“重试发布”，无需重采。</p>
+    {% elif run.status == 'completed' %}
+      <p class="hint">本轮已完成并发布。{% if run.notice %} {{ run.notice }}{% endif %}</p>
+    {% elif run.status == 'canceled' %}
+      <p class="hint">本轮已放弃；水位与已发布目录保持不变。{% if run.notice %} {{ run.notice }}{% endif %}</p>
+    {% endif %}
+
+    <div class="progress">
+      <div class="bar"><span style="width: {{ (run.progress_fraction * 100) if run.progress_fraction is not none else (0 if run.pages_done == 0 else 100) }}%"></span></div>
+      <span class="muted">
+        {{ run.pages_done }} 页 · 已写入 {{ run.records_seen }} 条
+        {% if run.complete_list_size %} / 共 {{ run.complete_list_size }}{% endif %}
+        {% if run.resumption_token %} · 分页凭据已保存，可续采{% endif %}
+        {% if run.token_resets %} · 凭据重置 {{ run.token_resets }} 次{% endif %}
+      </span>
+    </div>
+
+    {% if run.notice and run.status not in ('completed','canceled') %}<p class="notice">{{ run.notice }}</p>{% endif %}
+
+    <div class="actions">
+      {% if run.status == 'paused' %}
+        <form method="post" action="/harvest/{{ run.id }}/resume">
+          <button class="primary">继续采集</button>
+        </form>
+      {% endif %}
+      {% if run.status == 'publish_failed' %}
+        <form method="post" action="/harvest/{{ run.id }}/retry-publish">
+          <button class="primary">重试发布</button>
+        </form>
+      {% endif %}
+      {% if run.is_unresolved and run.status not in ('running','publishing') %}
+        <form method="post" action="/harvest/{{ run.id }}/cancel"
+              onsubmit="return confirm('放弃本轮？已入库记录保留，水位与已发布目录不变。')">
+          <button class="ghost">放弃本轮</button>
+        </form>
+      {% endif %}
+      {% if run.is_unresolved %}
+        <span class="muted">本轮未结束，需先继续/重试或放弃后才能开始新轮次。</span>
+      {% endif %}
+      {% if latest %}<a class="btn" href="/catalog/download">下载当前目录</a>{% endif %}
+    </div>
+  {% else %}
+    <p class="hint">没有进行中的轮次。选择本轮截止日（含当天）后开始；首次为全量，
+      此后从上次成功截止日（含当天）增量采集。</p>
+  {% endif %}
+  {% if not run_is_active %}
+    <form method="post" action="/harvest/start" class="startform">
+      <label>本轮截止日 <input type="date" name="until" value="{{ today }}" required></label>
+      <button class="primary">开始采集</button>
+      <span class="muted">当前水位：{{ watermark or '无（首次全量）' }}
+        {% if watermark %}（本轮将从 {{ watermark }} 含当天开始）{% endif %}</span>
+    </form>
+  {% endif %}
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h2>当前发布</h2>
+    {% if latest %}
+      <dl>
+        <dt>水位</dt><dd><strong>{{ latest.watermark }}</strong>（与本文件同一次发布）</dd>
+        <dt>记录</dt><dd>{{ latest.record_count }} 条有效记录</dd>
+        <dt>文件</dt><dd><code>{{ latest.file_name }}</code></dd>
+        <dt>大小 / SHA-256</dt><dd>{{ latest.size_bytes }} B · <code>{{ latest.sha256[:16] }}…</code></dd>
+        <dt>发布时间</dt><dd>{{ latest.published_at|localtime }}</dd>
+      </dl>
+      <a class="btn" href="/catalog/download">下载目录 XML</a>
+      <a class="btn ghost" href="/catalog.xml" target="_blank">浏览</a>
+    {% else %}
+      <p class="muted">尚无已发布的目录。完成一轮采集后自动发布。</p>
+    {% endif %}
+    <div class="stats">
+      <span><strong>{{ active_count }}</strong> 有效</span>
+      <span><strong>{{ deleted_count }}</strong> 已撤回（永久保留标记）</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>本轮变更（按 identifier 更新/删除）</h2>
+    {% if changed %}
+      <table class="mini">
+        <thead><tr><th>identifier</th><th>datestamp</th><th>状态</th></tr></thead>
+        <tbody>
+        {% for r in changed %}
+          <tr>
+            <td><code>{{ r.identifier }}</code></td>
+            <td>{{ r.datestamp }}</td>
+            <td>{% if r.deleted %}<span class="bad">撤回</span>{% else %}<span class="ok">有效</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">仅列本轮触及的记录；未出现 ≠ 删除，不做缺席推断。</p>
+    {% else %}
+      <p class="muted">本轮尚未写入记录。</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h2>采集历史</h2>
+    <table class="mini">
+      <thead><tr><th>#</th><th>模式</th><th>窗口</th><th>状态</th><th>页/记录</th><th>错误</th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ '全量' if r.mode == 'full' else '增量' }}</td>
+          <td>{{ r.window_from or '—' }} → {{ r.window_until }}</td>
+          <td><span class="pill status-{{ r.status }}">{{ r.status|status_label }}</span></td>
+          <td>{{ r.pages_done }} / {{ r.records_seen }}</td>
+          <td>{% if r.error_code %}<code>{{ r.error_code }}</code>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">暂无</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>发布历史</h2>
+    <table class="mini">
+      <thead><tr><th>#</th><th>水位</th><th>记录</th><th>文件</th><th>时间</th></tr></thead>
+      <tbody>
+      {% for p in publications %}
+        <tr>
+          <td>{{ p.id }}</td>
+          <td>{{ p.watermark }}</td>
+          <td>{{ p.record_count }}</td>
+          <td><code>{{ p.file_name }}</code></td>
+          <td>{{ p.published_at|localtime }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">暂无</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>发布故障演练</h2>
+  <p class="muted">下一轮发布时注入以下故障（一次性）：失败时旧目录与旧水位保持不变；
+    “进程退出”模式需配合 <code>docker compose restart catalog-web</code> 观察恢复。</p>
+  <form method="post" action="/config/fault" class="startform">
+    <label>故障模式
+      <select name="fault">
+        <option value="none" {% if fault == 'none' %}selected{% endif %}>none（正常）</option>
+        <option value="generate_error" {% if fault == 'generate_error' %}selected{% endif %}>generate_error（生成失败）</option>
+        <option value="commit_error" {% if fault == 'commit_error' %}selected{% endif %}>commit_error（落库失败）</option>
+        <option value="crash_before_commit" {% if fault == 'crash_before_commit' %}selected{% endif %}>crash_before_commit（改名前后退出）</option>
+        <option value="crash_after_publish" {% if fault == 'crash_after_publish' %}selected{% endif %}>crash_after_publish（登记前退出）</option>
+      </select>
+    </label>
+    <button class="ghost">应用</button>
+    <span class="muted">当前预置：<code>{{ fault }}</code></span>
+  </form>
+</section>
+
+<section class="card">
+  <h2>演示脚本</h2>
+  <ol class="muted">
+    <li>首次“开始采集”→ 全量 5 条并发布；水位 = 本轮截止日。</li>
+    <li>在演示源修改/撤回记录（同日 datestamp），再次采集：窗口从水位（含当天）开始，按 identifier 更新或删除。</li>
+    <li>采集中点源页面“让所有分页凭据失效”，继续采集会收到 <code>badResumptionToken</code>：从原窗口第一页重采、水位不动、已入库记录不丢。</li>
+    <li>选 <code>crash_after_publish</code> 并重采一轮 → 进程退出；<code>docker compose restart catalog-web</code> 后，页面水位与下载文件仍是上一版完整结果。</li>
+  </ol>
+</section>
+</main>
+</body>
+</html>

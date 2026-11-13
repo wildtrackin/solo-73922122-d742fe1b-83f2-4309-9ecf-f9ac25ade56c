@@ -1,0 +1,45 @@
+services:
+  oai-source:
+    build: .
+    container_name: oai-source
+    command: ["uvicorn", "source.app:create_source_app", "--host", "0.0.0.0", "--port", "8001", "--factory"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SOURCE_DB_PATH=/srv/data/source.db
+    ports:
+      - "8001:8001"
+    volumes:
+      - source-data:/srv/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/healthz').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  catalog-web:
+    build: .
+    container_name: catalog-web
+    depends_on:
+      oai-source:
+        condition: service_healthy
+    environment:
+      CATALOG_DATA_DIR: /srv/data
+      OAI_ENDPOINT: http://oai-source:8001/oai
+      OAI_SOURCE_HOME: http://localhost:8001/
+      # 可选：none|generate_error|commit_error|crash_before_commit|crash_after_publish
+      PUBLISH_FAILURE_MODE: ${PUBLISH_FAILURE_MODE:-none}
+      # 可选：单次后台采集最多页数，演示"继续采集"
+      MAX_PAGES_PER_CALL: ${MAX_PAGES_PER_CALL:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - catalog-data:/srv/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  source-data:
+  catalog-data:

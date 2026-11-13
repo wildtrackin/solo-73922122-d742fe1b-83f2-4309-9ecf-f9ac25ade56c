@@ -1,0 +1,68 @@
+:root {
+  --bg: #f5f6f8;
+  --card: #fff;
+  --ink: #1d2330;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --brand: #1f5f8b;
+  --ok: #1a7f4b;
+  --bad: #b23a2f;
+  --warn: #a2620a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.topbar {
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between;
+  padding: 20px 28px; background: linear-gradient(120deg, #16324a, #1f5f8b); color: #fff;
+}
+.topbar h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+.sub { margin: 4px 0 0; opacity: .8; font-size: 13px; }
+.endpoint { font-size: 12px; text-align: right; opacity: .9; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.endpoint code { background: rgba(255,255,255,.16); padding: 3px 7px; border-radius: 5px; }
+.endpoint a { color: #fff; }
+main { padding: 20px 28px 60px; display: flex; flex-direction: column; gap: 18px; max-width: 1180px; margin: 0 auto; }
+.banner { padding: 11px 28px; font-size: 14px; }
+.banner.ok { background: #e7f6ed; color: var(--ok); border-bottom: 1px solid #c7e8d3; }
+.banner.bad { background: #fdecea; color: var(--bad); border-bottom: 1px solid #f5c8c2; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.card h2 { margin: 0 0 14px; font-size: 16px; font-weight: 600; letter-spacing: .3px; }
+.grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; background: #eef1f5; color: #334; }
+.status-running, .status-publishing { background: #e3effa; color: #135a92; }
+.status-completed { background: #e7f6ed; color: var(--ok); }
+.status-paused, .status-publish_failed { background: #fdf1dd; color: var(--warn); }
+.status-canceled { background: #f0f0f2; color: var(--muted); }
+.runhead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.hint { background: #f7f8fa; border-left: 3px solid var(--brand); padding: 9px 12px; font-size: 13.5px; color: #334; }
+.notice { background: #fdf1dd; border-left: 3px solid var(--warn); padding: 8px 12px; font-size: 13px; color: var(--warn); }
+.progress { margin: 12px 0 14px; }
+.bar { height: 9px; background: #edf0f4; border-radius: 5px; overflow: hidden; margin-bottom: 6px; }
+.bar span { display: block; height: 100%; background: var(--brand); transition: width .3s; }
+.actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+.startform { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+input[type=date], input[type=text] { border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: inherit; }
+button, .btn {
+  display: inline-block; border: 1px solid var(--brand); background: var(--brand); color: #fff;
+  padding: 7px 15px; border-radius: 6px; font: inherit; font-size: 14px; cursor: pointer; text-decoration: none;
+}
+button.ghost, .btn.ghost { background: #fff; color: var(--brand); }
+button:hover, .btn:hover { filter: brightness(1.06); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 12px; font-size: 14px; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #f3f5f8; padding: 1px 5px; border-radius: 4px; }
+.code.sha, .sha { font-size: 12px; }
+.stats { display: flex; gap: 22px; margin-top: 14px; font-size: 13.5px; color: var(--muted); }
+.stats strong { color: var(--ink); font-size: 17px; }
+table.mini { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.mini th { text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--line); padding: 5px 7px; }
+table.mini td { border-bottom: 1px solid #f1f2f4; padding: 5px 7px; vertical-align: top; }
+.ok { color: var(--ok); }
+.bad { color: var(--bad); }
+ol.muted { margin: 0; padding-left: 20px; }

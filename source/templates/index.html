@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地 OAI-PMH 演示源</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>本地 OAI-PMH 演示源</h1>
+    <p class="sub">oai_dc · 每页 {{ page_size }} 条 · 日期粒度 YYYY-MM-DD（同日修改/撤回可被增量捕获）</p>
+  </div>
+  <div class="endpoint">
+    <span>端点</span><code>/oai</code>
+    <a href="/oai?verb=Identify" target="_blank" rel="noopener">Identify »</a>
+  </div>
+</header>
+
+<main>
+<div class="banner ok">
+  共 {{ stats.total }} 条：有效 {{ stats.active }}，已撤回 {{ stats.deleted }}（删除标记永久保留）。
+  修改/撤回都会刷新 datestamp 为今天，因此用 <code>from=今天</code> 的增量窗口即可发现。
+</div>
+
+<section class="card">
+  <h2>操作面板（用于演示同日更新与撤回）</h2>
+  <div class="grid">
+    <div>
+      <h3>修改记录</h3>
+      <form method="post" action="/demo/update" class="stack">
+        <label>identifier
+          <select name="identifier">
+            {% for it in items %}<option value="{{ it.identifier }}">{{ it.identifier }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>新标题 <input type="text" name="title" placeholder="留空则不改"></label>
+        <label>新主题 <input type="text" name="subject" placeholder="留空则不改"></label>
+        <button class="primary">保存修改（刷新 datestamp）</button>
+      </form>
+    </div>
+    <div>
+      <h3>撤回 / 再版</h3>
+      <form method="post" action="/demo/delete" class="stack inline">
+        <label>identifier
+          <select name="identifier">
+            {% for it in items %}<option value="{{ it.identifier }}">{{ it.identifier }}</option>{% endfor %}
+          </select>
+        </label>
+        <button>撤回（deleted 永久标记）</button>
+      </form>
+      <form method="post" action="/demo/restore" class="stack inline">
+        <label>identifier
+          <select name="identifier">
+            {% for it in items %}<option value="{{ it.identifier }}">{{ it.identifier }}</option>{% endfor %}
+          </select>
+        </label>
+        <button>再版（恢复上线）</button>
+      </form>
+      <p class="muted">撤回后记录仍以 deleted 头发送，采集端不能以"未出现"推断删除。</p>
+    </div>
+    <div>
+      <h3>分页凭据</h3>
+      <form method="post" action="/demo/trip-token">
+        <button class="danger">下一次凭据请求失效（推荐演示）</button>
+      </form>
+      <form method="post" action="/demo/reset-tokens" class="stack inline" style="margin-top:8px">
+        <button>立即清除所有分页凭据</button>
+      </form>
+      <p class="muted">失效后，采集端的下一次续页会收到 <code>badResumptionToken</code>，须回原窗口第一页重采、不推进水位。</p>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>源记录</h2>
+  <table class="mini">
+    <thead><tr><th>identifier</th><th>datestamp</th><th>状态</th><th>版本</th><th>标题</th><th>主题</th></tr></thead>
+    <tbody>
+    {% for it in items %}
+      <tr>
+        <td><code>{{ it.identifier }}</code></td>
+        <td>{{ it.datestamp }}</td>
+        <td>{% if it.deleted %}<span class="bad">deleted</span>{% else %}<span class="ok">active</span>{% endif %}</td>
+        <td>{{ it.version }}</td>
+        <td>{{ it.title }}</td>
+        <td>{{ it.subject }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">直接访问示例：<code>/oai?verb=ListRecords&metadataPrefix=oai_dc&amp;from={{ today }}</code></p>
+</section>
+</main>
+</body>
+</html>
